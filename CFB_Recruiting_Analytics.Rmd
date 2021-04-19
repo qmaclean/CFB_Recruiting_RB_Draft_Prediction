@@ -1,0 +1,988 @@
+---
+title: "Recruiting Quality Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+#sessionInfo()
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(kableExtra)
+library(ggpmisc)
+library(ggridges)
+library(RColorBrewer)
+library(cfbfastR)
+library(ggpmisc)
+library(ggrepel)
+library(caret)
+library(ResourceSelection)
+library(pscl)
+#HS_Player<-c("Jaxson Dart","Bryce Young",
+#             "D.J. Uiagalelei","Bru McCoy",
+#             "JT Daniels","Tate Martell","Derrick Brown","Derrick Henry","Jonathan #Gray","Dano Graves","Dorial Green-Beckham","")
+
+#DJ/BY -> 2019, Kyler Murray 2013/2014
+pbp<-readRDS(file = "cfb_pbp_2000s.rds")
+pbp1<-readRDS(file = "cfb_pbp_2010s.rds")
+pbp<-rbind(pbp,pbp1)
+#play_df<-readRDS(file="oregonplay_df.rds")
+rm(pbp1)
+
+
+
+#pbp_pc12<-pbp %>%
+#  select(game_id,year,pos_team,rush,half,period,down,EPA,yards_gained,rusher_player_name#,success,play_type,venue,yard_line,offense_conference) %>%
+#  filter(offense_conference == "Pac-12",play_type != "2pt Conversion",play_type != #"Extra Point Missed")
+
+#2010 - 2013
+#unique(play_df$offense_conference)
+#o_rush_pbp_prev_pc12<-play_df %>%
+#  select(game_id,season,pos_team,rush,half,period,down,ppa,yards_gained,rush_player,succ#ess,play_type,venue,yard_line,offense_conference) %>%
+#  filter(offense_conference %in% c('Pac-12','Pac-10'),play_type != "2pt #Conversion",play_type != "	Extra Point Missed")
+
+Rktg<-read.csv(file="Recruiting_Rankings.csv",head=TRUE,sep=",")
+Rktg<-subset(Rktg,Rktg$year >= 2005)
+drft<-read.csv(file="nfl_draft.csv",head=TRUE,sep=",")
+
+drft$College.Univ<-gsub("St.","State",drft$College.Univ)
+drft$College.Univ<-gsub("Statenford","Stanford",drft$College.Univ)
+drft$College.Univ<-gsub("North Carolina State","NC State",drft$College.Univ)
+#drft$College.Univ<-gsub("Mississippi","Ole Miss",drft$College.Univ)
+drft$College.Univ<-gsub("Boston Col.","Boston College",drft$College.Univ)
+drft$College.Univ<-gsub("Central Florida","UCF",drft$College.Univ)
+
+a<-Rktg %>%
+  group_by(name,year) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n)) %>%
+  filter(n > 1)
+
+
+Rktg<-Rktg %>%
+  mutate(name = case_when(
+    name == "Kenny Bigelow Jr." ~ "Kenny Bigelow",
+    name == "Da'Ron Payne" ~ "Daron Payne",
+    TRUE ~ as.character(name)
+  )) %>%
+  filter(committedTo != "" &
+           complete.cases(committedTo))
+
+ a<-Rktg %>%
+  group_by(name,year) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n)) %>%
+  filter(n > 1) 
+
+Rktg<-Rktg %>%
+  distinct()
+
+Rktg<- Rktg %>%
+  dplyr::select(year,ranking,name,school,committedTo,position,height,weight,stars,city,stateProvince,country,rating) %>%
+  dplyr::group_by(year,ranking,name,school,committedTo,position,height,weight,stars,city,stateProvince,country) %>%
+  dplyr::summarize(rating = mean(rating))
+
+
+Rktg1<-""
+
+drft1<-drft %>%
+  left_join(Rktg,drft,by=c("Player"="name","College.Univ"="committedTo"))
+
+Rktg1<-Rktg %>%
+  left_join(drft,Rktg,by=c("name"="Player","committedTo"="College.Univ"))
+
+Rktg1<- Rktg1 %>%
+  dplyr::mutate(Drafted = ifelse(Rnd >= 1,1,0),
+                First = ifelse(Rnd == 1,1,0))
+
+Rktg1$Drafted[is.na(Rktg1$Drafted)]<-0
+Rktg1$First[is.na(Rktg1$First)]<-0
+
+Rktg1$Rnd1<-ifelse(is.na(Rktg1$Rnd),"Not Drafted",Rktg1$Rnd)
+
+na.drft<-subset(drft1,is.na(drft1$school))
+na.drft<-subset(na.drft,na.drft$Draft >= 2010)
+table(na.drft$Draft)
+
+a<-na.drft %>%
+  group_by(College.Univ) %>%
+  summarize(n = n())
+
+table(Rktg$year)
+
+table(na.drft$Draft)
+
+
+rush_pbp<-pbp %>%
+  inner_join(Rktg1,pbp,by=c("rusher_player_name"="name","pos_team" = "committedTo"))
+
+pass_pbp<-pbp %>%
+  inner_join(Rktg1,pbp,by=c("passer_player_name"="name","pos_team" = "committedTo"))
+
+
+pbp$log_ydstogo<-log(pbp$yards_to_goal)
+rush_pbp$log_ydstogo<-log(rush_pbp$yards_to_goal)
+pass_pbp$log_ydstogo<-log(pass_pbp$yards_to_goal)
+rush_pbp$new_TimeSecsRem<-rush_pbp$TimeSecsRem
+
+
+c#reate_epa(rush_pbp)
+
+```
+
+## Intro
+
+
+The purpose of this analyis is to look at HS recruiting analytics & individual college performance to understand how this information translates to a player getting drafted in the NFL. We will evaluate some marquee programs in their recruiting success and build an initial model to predict Running back's NFL draft stock. Additionally, we want to understand if HS Ratings are indicative of someone being drafted or not. \
+
+### Top Recruiting Programs
+The chart below shows top 20 Recruiting Programs by Avg. Recruiting Rating since 2000. Since 2000, Alabama, Ohio State, and USC have dominated the recruiting trail with an average rating over that timeframe of 92 (out of 100). 16% of USC's recruits wree "5 Stars", which is the highest rate amongst any school. Alabama and Ohio State recruits have converted to becoming draft picks at a higher rate than any other school at 21%. 8% of Alabama's recruits end up being drafted in the first round, which is +2% the next closest school of Ohio State at 6% and nearly +7% higher than their rival in Auburn. That's some clear selling point for current HS Superstars. 
+
+```{r a1,echo=FALSE,message=FALSE,warning=FALSE}
+
+Rktg1 %>%
+  mutate(FiveStars = ifelse(stars == 5,1,0),
+         FourStars = ifelse(stars == 4,1,0),
+         ThreeStars = ifelse(stars == 3,1,0)) %>%
+  group_by(committedTo) %>%
+  summarize(commits = n(),
+    meanStars = round(mean(stars,na.rm = TRUE),2),
+            meanRating = round(mean(rating,na.rm = TRUE),2),
+    FiveStars = sum(FiveStars),
+    FourStars = sum(FourStars),
+    ThreeStars = sum(ThreeStars),
+    FiveStarPct = round(sum(FiveStars) / n(),2),
+    Drafted = sum(Drafted),
+    DraftedPct = round(sum(Drafted) / n(),2),
+    First = sum(First),
+    FirstPct = round(sum(First) / n(),2)) %>%
+  filter(commits >= 10) %>%
+  arrange(desc(meanRating)) %>%
+  head(n=20L) %>%
+kable(caption = "Top 20 Recruiting Programs by Avg. Rating") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2005 - 2020; 10 or more commits")
+
+
+
+```
+
+The best classes ever, in terms of mean rating were the 2008 Ohio State class and 2013 USC class, which had an average rating 0.96. I would through the 2014 Alabama class in there as an equal given they 23 recruits with an average rating 0.95, which is pretty impressive. What also makes this Alabama class impressive was that 43% of the recruits were drafted into the NFL and 2 were drafted in the first round (which wasn't even the best Alabama First Round Draft Year). Florida in 2007 had 13% of their recruits drafted in the first round with a high 26% of their recruits being 5 stars. The USC classes on the board although high 5 star and average rating, the recruits haven't necessarily panned out out in terms of a high percentage being drafted, with the exception of the 2005 USC class, which had 62% of their recruits drafted. 
+```{r a2,echo=FALSE,message=FALSE,warning=FALSE}
+
+Rktg1 %>%
+  mutate(FiveStars = ifelse(stars == 5,1,0),
+         FourStars = ifelse(stars == 4,1,0),
+         ThreeStars = ifelse(stars == 3,1,0)) %>%
+  group_by(committedTo,year) %>%
+  summarize(commits = n(),
+    meanStars = round(mean(stars,na.rm = TRUE),2),
+            meanRating = round(mean(rating,na.rm = TRUE),2),
+    FiveStars = sum(FiveStars),
+    FourStars = sum(FourStars),
+    ThreeStars = sum(ThreeStars),
+    FiveStarPct = round(sum(FiveStars) / n(),2),
+    Drafted = sum(Drafted),
+    DraftedPct = round(sum(Drafted) / n(),2),
+    First = sum(First),
+    FirstPct = round(sum(First) / n(),2)) %>%
+  filter(commits >= 10) %>%
+  arrange(desc(meanRating)) %>%
+  head(n=20L) %>%
+kable(caption = "Top 20 Recruiting Classes All-Time in Avg. Rating") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2005 - 2020; 10 or more commits")
+
+```
+
+
+When takinga look at the distribution of HS Rating to drafted, it is apparent that the higher the rating the more likely to be drafted in higher rounds. However, The distribution for 1st/2nd rounds appear to be much more bi-modal, which shows that teams are willing to take a chance on lower ratings (maybe proved themselves more in college) and higher ratings with raw skillset. 
+```{r a3,echo=FALSE,message=FALSE,warning=FALSE}
+
+Rktg1$Rnd1<-ifelse(is.na(Rktg1$Rnd),"Not Drafted",Rktg1$Rnd)
+
+ggplot(Rktg1,aes(x=rating,y=Rnd1,fill=rating,color=rating)) +
+  geom_density_ridges_gradient(quantile_lines=TRUE,
+                      quantile_fun=function(x,...)mean(x)) +
+  scale_fill_viridis_c(name="rating",option="C") +
+  scale_y_discrete(limits=rev) +
+  ylab("Round Drafted") +
+  labs(title = "Distribution of Rating by Round Drafted",
+              caption = "Data source: CFBScraper")
+
+
+```
+
+# Running Backs Progression to the Draft
+This next chart shows rushers with high average points per attempt, whihch helps to shows explosiveness and effectiveness of runers in college. As we can see w/ Georgia Tech & Army ranked high in this list that Triple Option programs are likely to have higher mean points per attempt. A couple hidden gems in this list are both Kenyan Drake and Kareem Hunt. Both drafted in the 3rd round with less overall rushes and therefore film to be evaluated from. We can hypothesize that their high mean points per attempt could gave contributed to their success in the NFL. 
+```{r a4,echo=FALSE,message=FALSE,warning=FALSE}
+
+rush_pbp$ppa<-as.numeric(rush_pbp$ppa)
+rush_pbp$drafted_rusher_name<-ifelse(rush_pbp$Drafted == 1 & rush_pbp$Pos == "RB",rush_pbp$rusher_player_name,NA)
+rush_pbp$rush_pick<-ifelse(rush_pbp$Drafted == 1 & rush_pbp$Pos == "RB",rush_pbp$Pick,NA)
+rush_pbp$scoring_int<-ifelse(rush_pbp$scoring == TRUE,1,0)
+rush_pbp$success_yds<-ifelse(rush_pbp$success == 1,rush_pbp$yards_gained,NA)
+rush_pbp$rush_Rnd<-ifelse(rush_pbp$Drafted == 1 & rush_pbp$Pos == "RB",rush_pbp$Rnd,NA)
+
+a<-rush_pbp %>%
+  filter(rush==1,down<=4,position != "PRO",position != "DUAL") %>%
+  group_by(rusher_player_name,rating,position,pos_team,offense_conference,drafted_rusher_name,rush_pick,rush_Rnd) %>%
+  summarize(mean_ppa = round(mean(ppa,na.rm = TRUE),2),
+            success_rate = round(mean(success),2),
+            ypc=round(mean(yards_gained),2),
+            rushes=n(),
+            rush_yds=sum(yards_gained),
+            successes = sum(success),
+            yps = round(mean(success_yds,na.rm = TRUE),2),
+            success_yds = round(sum(success_yds,na.rm = TRUE),2),
+            TDs = sum(scoring_int),
+            college_years = n_distinct(year.x)) %>%
+  mutate(drafted = ifelse(is.na(drafted_rusher_name),0,1)) %>%
+  select(-drafted_rusher_name) %>%
+  filter(college_years <= 5)
+
+#ggplot(a,aes(rush_attempts)) +
+#  geom_density()
+
+rush_pbp %>%
+  filter(rush==1,down<=4,position != "PRO",position != "DUAL") %>%
+  group_by(rusher_player_name,rating,position,pos_team,Rnd1) %>%
+  summarize(mean_ppa = round(mean(ppa,na.rm = TRUE),2),
+            success_rate = round(mean(success),2),
+            ypc=round(mean(yards_gained),2),
+            rushes=n(),
+            rush_yds=sum(yards_gained),
+            yps = round(mean(success_yds,na.rm = TRUE),2),
+            TDs = sum(scoring_int)) %>%
+  arrange(desc(mean_ppa)) %>%
+  filter(rushes>100) %>%
+  head(n=15L) %>% 
+  kable(caption = "Top 15 Mean Points Per Attempt by Rating") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2000-2020","Filtered for 100 plays or more","Not including QBs")
+
+
+```
+
+A successful run is one that is more than more than 50% of distance to 1st down in rushing yards on 1st down (i.e. First down with 10 yards to go, a rush of over 5 yards is successful run), more than 70% on 2nd down and distance to go, or if the 3rd or 4th down run resulted in a first down. A success rate would yield the proportion of successful runs to total rushes. A high success rate would indicate a high big play ability and efficiency. Not surprisingly, Percy Harvin's 67% success rate and a 0.99 rating out of HS translated to his appeal as a first round pick. Again, Kenyan Drake and Kareem Hunt's high success rate with a lower sample size translated well to the NFL. 
+```{r a5,echo=FALSE,message=FALSE,warning=FALSE}
+
+rush_pbp %>%
+  filter(rush==1,down<=4,position != "PRO",position != "DUAL") %>%
+  group_by(rusher_player_name,rating,position,pos_team,Rnd1) %>%
+  summarize(mean_ppa = round(mean(ppa,na.rm = TRUE),2),
+            success_rate = round(mean(success),2),
+            ypc=round(mean(yards_gained),2),
+            rushes=n(),
+            rush_yds=sum(yards_gained),
+            successes = sum(success),
+            yps = round(mean(success_yds,na.rm = TRUE),2),
+            TDs = sum(scoring_int)) %>%
+  arrange(desc(success_rate)) %>%
+  filter(rushes>100) %>%
+  head(n=15L) %>% 
+  kable(caption = "Top 15 Success Rate by Rating") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2000-2020","Filtered for 100 plays or more","Not including QBs")
+
+
+```
+
+Yards Per Carry is a lot more well-known statistic than success rate and not surprisingly we see similar names on this list. Jahvid Best's 7.37 YPC on 362 rushes is pretty incredible. Especially when you consider he had a 47% success rate. 
+```{r a6,echo=FALSE,message=FALSE,warning=FALSE}
+
+rush_pbp %>%
+  filter(rush==1,down<=4,position != "PRO",position != "DUAL") %>%
+  group_by(rusher_player_name,rating,position,pos_team,Rnd1) %>%
+  summarize(mean_ppa = round(mean(ppa,na.rm = TRUE),2),
+            success_rate = round(mean(success),2),
+            ypc=round(mean(yards_gained),2),
+            rushes=n(),
+            rush_yds=sum(yards_gained),
+            successes = sum(success),
+            yps = round(mean(success_yds,na.rm = TRUE),2),
+            TDs = sum(scoring_int)) %>%
+  arrange(desc(ypc)) %>%
+  filter(rushes>100) %>%
+  head(n=15L) %>% 
+  kable(caption = "Top 15 Yards Per Carry by Rating") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2000-2020","Filtered for 100 plays or more","Not including QBs")
+
+```
+
+The workhorses in terms of career rushing yards are very familiar names for college footballl fans. Montee Ball arguably had the best rushing career in the past 20 years and at a 50% success rate on 900+ rushes is truly incredible. Branden Oliver ended up having a short stint with the Chargers and marks a lower valued rusher that can be effective at the next level. 
+```{r a7,echo=FALSE,message=FALSE,warning=FALSE}
+
+rush_pbp %>%
+  filter(rush==1,down<=4,position != "PRO",position != "DUAL",rusher_player_name != "Mike Davis") %>%
+  group_by(rusher_player_name,rating,position,pos_team,Rnd1) %>%
+  summarize(mean_ppa = round(mean(ppa,na.rm = TRUE),2),
+            success_rate = round(mean(success),2),
+            ypc=round(mean(yards_gained),2),
+            rushes=n(),
+            rush_yds=sum(yards_gained),
+            successes = sum(success),
+            yps = round(mean(success_yds,na.rm = TRUE),2),
+            TDs = sum(scoring_int)) %>%
+  arrange(desc(rushes)) %>%
+  filter(rushes>100) %>%
+  head(n=15L) %>% 
+  kable(caption = "Top 15 Rush Attempts by Rating") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2000-2020","Filtered for 100 plays or more","Not including QBs","Filtered out Mike Davis from South Carolina given duplicate names at the school")
+
+
+```
+
+Bringing it altogether, we can see that the SEC is the preferred destination for running backs with nearly 28% of RBs getting drafted at an average draft position of ~95 +/- 67 draft position. What that means is that nearly a 1/3 of running backs in the SEC project to be drafted by 3 round, which is nearly a whole round sooner on average than the ACC. The 2nd highest draft position belongs to the PAC 12, which had less rusher overall. It may be that the longevity of a PAC12 rushers career made it less desirable of a conference to commit to compared to other conferences. The MAC & the WAC had a few prolific running bucks drafted in the 3rd round, which goes to show there are hidden gems in some of the smaller conferences. 
+```{r a8,echo=FALSE,message=FALSE,warning=FALSE}
+
+#unique(rush_pbp$Drafted)
+rush_pbp$drafted_rusher_name<-ifelse(rush_pbp$Drafted == 1,rush_pbp$rusher_player_name,NA)
+
+rush_pbp %>%
+  mutate(offense_conference = case_when(
+    offense_conference == "Pac-10" ~ "Pac-12",
+    TRUE ~ as.character(offense_conference)
+  ),
+  position = case_when(
+    position == "APB" ~ "RB",
+    position == "FB" ~ "RB",
+    position == "ATH" ~ "RB",
+    TRUE ~ as.character(position)
+  )) %>%
+  filter(rush==1,down<=4,position %in% c("APB","ATH","RB")) %>%
+  group_by(offense_conference,position) %>%
+  summarize(players = n_distinct(rusher_player_name),
+    mean_rating = round(mean(rating),2),
+            sd_rating = round(sd(rating),2),
+            drafted = n_distinct(drafted_rusher_name),
+            drafted_pct =  round(n_distinct(drafted_rusher_name)/n_distinct(rusher_player_name),2),
+          mean_draft_pick = round(mean(Pick,na.rm=TRUE),1),
+    sd_draft_pick = round(sd(Pick,na.rm=TRUE),1),
+          mean_ppa = round(mean(ppa,na.rm = TRUE),2),
+            success_rate = round(mean(success),2),
+            ypc=round(mean(yards_gained),2),
+            plays_mean=round(n()/n_distinct(rusher_player_name),2)) %>%
+  arrange(desc(players)) %>%
+  filter(plays_mean>100) %>%
+  kable(caption = "Top RB Conferences by Avg Rating") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2000-2020","Avg above 100 rushes per player","Big East was disbanded in 2012","Combined All-Purpose Back, Fullback and General Athletes that have high rushing attempts into Runningback")
+
+
+```
+
+
+The chart below shows Success rate compared to HS Recruiting rankings of all individual running backs. The names represent some outliers in the dataset. I think one thing is interesting call-out is the consistently lower success rate of rushers in ACC compared to both SEC & PAC 12. That may be what has hurted ACC RB's draft capital. 
+
+```{r a9,echo=FALSE,message=FALSE,warning=FALSE}
+
+#filter for rushers #
+rush<-rush_pbp %>%
+  filter(rush==1,down<=4,position %in% c("APB","ATH","FB","RB"),
+         offense_conference %in% c("ACC","Big 12","SEC","Pac-10","Pac-12","Big Ten")) %>%
+  group_by(rusher_player_name,rating,position,pos_team,offense_conference) %>%
+  summarize(mean_ppa = mean(ppa,na.rm = TRUE),
+            success_rate = mean(success),
+            ypc=mean(yards_gained),
+            plays=n()) %>%
+  arrange(desc(mean_ppa)) %>%
+  filter(plays>50) 
+
+rush %>%
+  ggplot(aes(x = success_rate, y = rating)) +
+  #geom_hline(yintercept = mean(rush$mean_ppa), color = "red", linetype = "dashed") +
+  #geom_vline(xintercept =  mean(rush$success_rate), color = "red", linetype = "dashed") +
+  geom_point(color = ifelse(rush$offense_conference == "SEC", "green",ifelse(rush$offense_conference == "ACC","orange",ifelse(rush$offense_conference %in% c("Pac-10","Pac-12"),"purple","grey"))), cex=rush$plays/60, alpha=1/16) +
+  geom_text_repel(aes(label=rusher_player_name),
+      force=1, point.padding=0,
+      segment.size=0.1) +
+  labs(x = "Success rate",
+       y = "HS Recruiting Ranking",
+       caption = "Data from cfbfastR","Green is SEC rushers,ACC is orange,Pac 12 is purple; all else grey",
+       title = "Conference success rate and HS Recruiting Ranking",
+       subtitle = "2010-2020") +
+  theme_bw() +
+  theme(axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        plot.title = element_text(size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 14, hjust = 0.5),
+        plot.caption = element_text(size = 12))
+
+
+```
+
+## Predicted Individuals Probability of Being Drafted
+We will be utilizing a classification model with 5 cross-folds (or resampling of data for training & testing the model) to build a prediction model. As we previewed the variables we intend to add to our model consist of the following:  HS Rating (on a 0 to 1 scale), conference the individual played in, mean points per attempt (mean_ppa), success rate, yards per carry (ypc), career rush yards, successes, success yards, career Touchdowns, and years of college playing experience. Our first model will be to build an XGBoost Tree model that uses gradient boosted decision tree to rank and order important variables. XGBoost models work well in cases where there are a mixture of categorical (such as conference) and numeric field. The concept of gradient booting is an ensemble of decision trees designed to enhance the learning of the decision trees. The goal is to spend much more time on weak learners to optimize or boot its learning capability and reduce information loss. It does so in batch or ensemble learning. 
+```{r a10,include=FALSE}
+
+a$rush_pick[is.na(a$rush_pick)]<-0
+a$rush_Rnd[is.na(a$rush_Rnd)]<-0
+a$rush_drafted<-ifelse(a$rush_Rnd > 0,1,0)
+a$offense_conference<-ifelse(a$offense_conference == "Pac-10","Pac-12",a$offense_conference)
+
+#### few models to build ####
+
+#Drafted model? 
+#avg draft position ? 
+#avg Round? 
+
+
+#data_clean<- a %>%
+#  dplyr::select(-c(slugSeason,idPlayer,namePlayer,numberGamePlayerSeason,GP#_Season))
+
+### split
+b<-a %>%
+  dplyr::select(rusher_player_name,rating,position,pos_team,offense_conference,
+         mean_ppa,success_rate,ypc,rushes,rush_yds,successes,yps,success_yds,TDs,college_years,rush_drafted)
+b<-b[,c(3:18)]
+
+ds<-subset(b,!is.na(rush_drafted))
+
+ds<-na.omit(ds)
+
+nrow<-nrow(ds)
+
+ds$u<-runif(n=nrow,min=0,max=1)
+
+ds$rush_drafted<-as.factor(ds$rush_drafted)
+
+
+#create train/test split;
+dfc.train<-subset(ds,u < 0.70)
+dfc.test<-subset(ds,u >= 0.70)
+
+
+
+fitControl <- trainControl(## 5-fold CV
+  method = "cv",
+  number = 5,
+  summaryFunction = multiClassSummary,
+  verboseIter = TRUE)
+
+
+
+## condensed >50% correlation
+draft_frm<-formula(rush_drafted ~ rating + offense_conference  + mean_ppa + success_rate + ypc + rush_yds + successes + success_yds + TDs + college_years)
+
+
+pts_xgb <- train(
+  form = draft_frm,
+  data = dfc.train,
+  method = "xgbTree",
+  trControl = fitControl
+)
+
+#summary(pts_xgb)
+
+
+
+
+
+
+
+
+
+
+```
+
+The next two charts show the iteration of learning from the XGBoost model and shows that through several iterations we are getting an ~94-95% accuracy in our resampling. The third importance chart show which variables had the most predictive importance in determining someone's ability to be drafted. We can see that someone's Success Yards has over 0.3 importance, which said different has over 30% of importance in weights of model. This tells us that someone career explosive in being able to gain big chunks of yardage per rush. This intuitively makes sense as frequent big plays would stand out on the tape. Career Touchdowns (TDs), Rush Yards and HS Rating all have between 0.15 to 0.20 average importance in rating. It's interesting to see how well-known recruits translates to ability to be drafted, this makes sense given the exposure of well-known recruiting programs and the conversion ability of these programs to get high-profile running backs drafted. SEC & PAC 12 as shown prior have a relative boost in probability of being drafted relative to all other conferences. 
+```{r a11,echo=FALSE,message=FALSE,warnking=FALSE}
+
+
+pts_xgb %>% plot()
+
+varImp(pts_xgb,scale=FALSE) %>% plot()
+
+#hoslem
+
+
+
+```
+
+Our next model is to fit a generalized linear model or logistic regression to fit to our dataset to see if there is any improvement of the model. The GLM model will also help us to understand the coefficients of the model to see how they affect the output.  What's also helpful with this output is the p-value, which helps to see statistical significance in the model's output. This biggest coefficient in value and signficance is college years. This model suggest that an increase in college years actually decreases their chances of being drafted. That's an interesting takeaway that long career running backs may be more banged up going into the NFL. Similar to the previous model, HS Rating still has high weight of draftability. Being an SEC rusher highly increases your odds of being drafted according to this model too. TDs and Successes are also contributing variables in the models too. 
+```{r a12,echo=FALSE,message=FALSE,warning=FALSE}
+
+pts_glm <- train(
+  form = draft_frm,
+  data = dfc.train,
+  method = "glm",
+  trControl = fitControl
+)
+
+summary(pts_glm)
+
+
+
+
+
+```
+
+The last model will take the same GLM approach but with a lighter and insignificant amount of variables. For this lighter model, we solely included HS rating, success rate, career rush yards, total career successes, career success yards, career TDs, and college years. 
+
+Improved AIC by 2pts; From this we tested the train and test set and returned a 96% and 95% accuracy, which is a slight improvement from the XGBTree model. Given the simplicity of the model, this makes sense. To confirm, statistical significance we ran a Hosmer and Lemeshow Goodness of Fit and see our p-value is statistically significant. In this model, HS Rating is the most important followed by years of experience (which we confirmed has a slight negative coefficient). Given the simplicity and accuracy, we will choose this model. 
+```{r a13,echo=FALSE,message=FALSE,warning=FALSE}
+
+draft_frm_lite<-formula(rush_drafted ~ rating + success_rate + rush_yds + successes + success_yds + TDs + college_years)
+
+pts_glm1 <- train(
+  form = draft_frm_lite,
+  data = dfc.train,
+  method = "glm",
+  trControl = fitControl
+)
+
+summary(pts_glm1)
+
+varImp(pts_glm1,scale=FALSE) %>% plot()
+
+hoslem.test(dfc.train$rush_drafted,fitted(pts_glm1))
+
+dfc.test$pred<-predict(pts_glm1,newdata = dfc.test)
+
+dfc.test$pred_accuracy<-ifelse(dfc.test$pred == dfc.test$rush_drafted,TRUE,FALSE)
+
+table(dfc.test$pred_accuracy) / nrow(dfc.test)
+
+dfc.train$pred<-predict(pts_glm1,newdata = dfc.train)
+
+dfc.train$pred_accuracy<-ifelse(dfc.train$pred == dfc.train$rush_drafted,TRUE,FALSE)
+
+table(dfc.train$pred_accuracy) / nrow(dfc.train)
+
+
+#resamp<<- resamples(list(XGB = pts_xgb,
+#                          GLM = pts_glm,
+#                          GLM = #pts_glm1))
+
+#resamp
+
+#summary(resamp)
+
+
+
+
+```
+
+Using this model, we can predict based off RBs career stats, the probability of that runningback getting drafted. The table below shows the Top 20 in probability of getting drafted as a running back in the NFL. 
+
+We can see the model works well for the most part with the exception of Noel Devine, Denard Robinson and John Clay. Noel Devine with Pat White were one of the winningest duos in CFB history in the past 15 years. Unfortunately, Noel Devine was hampered by ankle injuries in his senior season (this kept him out of draft combine). Noel Devine ended up being undrafted and signed with the Philadelphia Eagles. He spent 4 days with the team before retiring from the NFL. He spent some time in the Canadian Football League and American Arena League. Denard Robinson was actually drafted as a Runningback in the NFL but given he was mostly a QB in college, he didn't quite qualify as runningback drafted. This shows a shortcoming to the model of people switching positions. John Clay was a slight anomaly. He forgoed his senior season to enter the 2011 NFL Draft and ended up being undrafted. He was signed by Steelers and ended up only recording 41 career rushing yards. Outside of those anomalies, we would say the model is fairly accurate for those looking at making the leap, which may have the application for RBs deciding to enter the draft or not. All of the running backs were fairly household names by the time of the draft. 
+
+```{r a14,echo=FALSE,message=FALSE,warning=FALSE}
+
+a$pred<-predict(pts_glm1,newdata = a)
+a$pred_prob<-predict(pts_glm1,newdata = a,type="prob")
+a$Draft_Prob<-a$pred_prob$`1`
+
+
+a<-a %>%
+  dplyr::select(-pred_prob)
+
+a %>%
+  dplyr::group_by(rusher_player_name) %>%
+  dplyr::arrange(desc(Draft_Prob)) %>%
+  head(n=20L) %>%
+  dplyr::select(rusher_player_name,rating,rush_drafted,Draft_Prob,position,pos_team,rush_Rnd,mean_ppa,success_rate,ypc,rush_yds,TDs,college_years) %>%
+  kable(caption = "Top 20 Draft Probability") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2005-2019")
+  
+
+
+```
+
+In looking undrafted RB with highest probability, the top 4 are fairly big anomalies in the model. For instance, Lance Dunbar was a regular backup for the Cowboys with over 400+ career rushing yards. Michael Dyer had a spectacular career at Louisville/Auburn playing with both Cam Newton and Lamar Jackson but his transfer raised some off field questions to be undrafted. Malcom Brown, a undrafted signee with the LA Rams ended up being pivotal with the Rams run to the Superbowl when Todd Gurley went down and has as of late proved to be an effective NFL runningback. Byron Marshall was used as a hybrid RB/WR in his role at Oregon proving to be more of hyrid athlete on the field in the right scheme. Taylor Martinez, is still active in college and a QB putting him in a similar situation as Denard Robinson. 
+```{r a15,echo=FALSE,message=FALSE,warning=FALSE}
+
+a %>%
+  dplyr::group_by(rusher_player_name) %>%
+  dplyr::arrange(desc(Draft_Prob)) %>%
+  dplyr::filter(rush_drafted == 0 & rush_yds > 1000) %>%
+  dplyr::select(rusher_player_name,rating,rush_drafted,Draft_Prob,position,pos_team,rush_Rnd,mean_ppa,success_rate,ypc,rush_yds,TDs,college_years) %>%
+  head(n=20L) %>%
+  kable(caption = "Top 15 Draft Probability for Undrafted RBs") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2005-2020","Filtered for those with 1000 career yards")
+
+```
+
+Below lists (in order) the top draft probability of RBs from non Power 5 conferences. You'll notice some recognizable names below. What you may notice is that a lot of these runningbacks have late round appeal, which goes to show you can still find some value in later rounds. Our next goal would be to project what round we think runningback's would go in or their average draft position would be. 
+```{r a16,echo=FALSE,message=FALSE,warning=FALSE}
+
+
+
+a %>%
+  dplyr::group_by(rusher_player_name) %>%
+  dplyr::arrange(desc(Draft_Prob)) %>%
+  dplyr::filter(rush_pick >= 1,offense_conference %in% c("Conference USA","Mid-American","Mountain West","Big East","Sun Belt","Western Athletic","FBS Independents"), rusher_player_name != "Doug Martin") %>%
+  dplyr::select(rusher_player_name,rating,Draft_Prob,position,pos_team,offense_conference,rush_Rnd,mean_ppa,success_rate,ypc,rush_yds,TDs,college_years) %>%
+  kable(caption = "Top Draft Probability for RB Drafted from Non Power 5 Conferences") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2005-2020","Filtered for those with 1000 career yards")
+
+```
+
+#Predict Average Draft Position #
+For Prediciting Average Position, we will building a regression model. Given a majority of running backs will not be drafted we will have a fair amount of zeros inflating our model. We will building a regression model specifically handling zero inflation to correct our sampling for. To illustrate, we've constructed 3 models. The first, includes the following formula: \
+\
+formula = rush_pick ~ rating + mean_ppa + success_rate + ypc + success_yds + TDs + \ college_years + ACC + MountainWest + WesternAthletic + SEC + PAC12 + BigTen + \ Big12,data=dfc.train) \
+\
+The second formula is a lighter model not accounting for the conferences: \
+m2<-zeroinfl(formula = rush_pick ~ rating + mean_ppa + success_rate + ypc + success_yds + TDs + college_years,data=dfc.train) \
+\
+The Third formula is the lightest model only accounting for rating, success yards and college years, which we've shown to be major inflences. \
+m3<-zeroinfl(formula = rush_pick ~ rating + success_yds + college_years,data=dfc.train) \
+\
+We can see that regardless of the variables added or subtracted, the best R-squared we can get is 0.19, which means that 19% of predicted variables can be explained of the current dataset. To improve, we likely need other variables to add to improve. 
+
+
+```{r a17,echo=FALSE,message=FALSE,warning=FALSE}
+
+
+c<-a %>%
+  dplyr::select(rusher_player_name,rating,position,pos_team,offense_conference,
+         mean_ppa,success_rate,ypc,rushes,rush_yds,successes,yps,success_yds,TDs,college_years,rush_pick)
+d<-c[,c(3:17)]
+
+d$ACC<-ifelse(d$offense_conference == "ACC",1,0)
+d$MountainWest<-ifelse(d$offense_conference == "Mountain West",1,0)
+d$ConferenceUSA<-ifelse(d$offense_conference == "Conference USA",1,0)
+d$WesternAthletic<-ifelse(d$offense_conference == "Western Athletic",1,0)
+d$SEC<-ifelse(d$offense_conference == "SEC",1,0)
+d$PAC12<-ifelse(d$offense_conference %in% c("Pac-12","Pac-10"),1,0)
+d$BigTen<-ifelse(d$offense_conference == "Big Ten",1,0)
+d$MidAmerican<-ifelse(d$offense_conference == "Mid-American",1,0)
+d$Big12<-ifelse(d$offense_conference == "Big 12",1,0)
+d$AAC<-ifelse(d$offense_conference == "American Athletic",1,0)
+
+
+
+ds<-subset(d,!is.na(rush_pick))
+
+ds<-na.omit(ds)
+
+nrow<-nrow(ds)
+
+ds$u<-runif(n=nrow,min=0,max=1)
+
+#ds$drafted<-as.factor(ds$drafted)
+
+
+#create train/test split;
+dfc.train<-subset(ds,u < 0.70)
+dfc.test<-subset(ds,u >= 0.70)
+
+
+
+#fitControl <- trainControl(## 5-fold CV
+#  method = "cv",
+#  number = 5,
+#  verboseIter = TRUE,
+#  sampling = "down")
+
+#ggplot(ds,aes(x=rush_pick)) +
+#  geom_density()
+
+
+#unique(dfc.train$offense_conference)
+
+
+
+
+## condensed >50% correlation
+draft_frm<-formula(rush_pick ~ rating + mean_ppa + success_rate + ypc + success_yds + TDs + college_years + ACC + MountainWest + ConferenceUSA + WesternAthletic + SEC + PAC12 + BigTen + MidAmerican + Big12 + AAC)
+
+
+#pts_rf <- train(
+#  form = draft_frm,
+#  data = dfc.train,
+#  method = "ranger",
+#  trControl = fitControl
+#)
+
+m1<-zeroinfl(formula = rush_pick ~ rating + mean_ppa + success_rate + ypc + success_yds + TDs + college_years + ACC + MountainWest + WesternAthletic + SEC + PAC12 + BigTen + Big12,data=dfc.train)
+
+#summary(m1)
+             
+y_pred<-predict(m1,newdata = dfc.test)
+
+sst<-sum((dfc.test$rush_pick - mean(dfc.test$rush_pick)) ^2)
+sse<-sum((y_pred - dfc.test$rush_pick)^2)
+
+rsq<- 1 - sse/sst
+
+#rsq
+
+model_compare<-data.frame("Large Model",rsq)
+
+
+
+m2<-zeroinfl(formula = rush_pick ~ rating + mean_ppa + success_rate + ypc + success_yds + TDs + college_years,data=dfc.train)
+
+#summary(m2)
+             
+y_pred<-predict(m2,newdata = dfc.test)
+
+sst<-sum((dfc.test$rush_pick - mean(dfc.test$rush_pick)) ^2)
+sse<-sum((y_pred - dfc.test$rush_pick)^2)
+
+rsq1<- 1 - sse/sst
+
+model_compare1<-data.frame("No Conference Model",rsq1)
+names(model_compare)[1]<-"formula"
+names(model_compare)[2]<-"R-squared"
+names(model_compare1)[1]<-"formula"
+names(model_compare1)[2]<-"R-squared"
+
+model_compare<-rbind(model_compare,model_compare1)
+
+
+## .1279
+
+m3<-zeroinfl(formula = rush_pick ~ rating + success_yds + college_years,data=dfc.train)
+
+#summary(m3)
+             
+y_pred<-predict(m3,newdata = dfc.test)
+
+sst<-sum((dfc.test$rush_pick - mean(dfc.test$rush_pick)) ^2)
+sse<-sum((y_pred - dfc.test$rush_pick)^2)
+
+rsq2<- 1 - sse/sst
+
+model_compare1<-data.frame("Light Model",rsq2)
+
+names(model_compare1)[1]<-"formula"
+names(model_compare1)[2]<-"R-squared"
+
+model_compare<-rbind(model_compare,model_compare1)
+
+model_compare %>%
+  kable(caption = "Model Comparison for ADP") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2000-2020","ADP = Average Draft Position")
+
+
+
+```
+
+
+#### Predict Round Drafted ####
+Since we can't accurate predict the average draft position with our current dataset, let's see if we can predicted Round drafted with our current data set. We will be building a classification model that aims to predict 8 classifications (7 rounds plus not drafted probability). To account for a same issue of an imbalance of non-drafted, we can use a "down sampling" technique to treat the prediction of each classifications separately. This helps to make sure that the probability doesn't over-generalize for zero imbalance. In using an XGBTree, we can see with our adjust imbalance classification model that we were able to achieve roughly ~55% accuracy. The 55% although not as high as 95% accuracy of a binary classification model is fairly decently given we are assigning a probability to 8 different classifcation at once. 
+```{r a18,echo=FALSE,message=FALSE,warning=FALSE}
+
+b<-a %>%
+  dplyr::select(rusher_player_name,rating,position,pos_team,offense_conference,
+         mean_ppa,success_rate,ypc,rushes,rush_yds,successes,yps,success_yds,TDs,college_years,rush_Rnd)
+b<-b[,c(3:18)]
+
+ds<-subset(b,!is.na(rush_Rnd))
+
+ds<-na.omit(ds)
+
+nrow<-nrow(ds)
+
+ds$u<-runif(n=nrow,min=0,max=1)
+
+ds$rush_Rnd1<-ds$rush_Rnd
+ds$rush_Rnd<-as.factor(ds$rush_Rnd)
+
+
+
+#create train/test split;
+dfc.train<-subset(ds,u < 0.70)
+dfc.test<-subset(ds,u >= 0.70)
+
+
+
+fitControl <- trainControl(## 5-fold CV
+  method = "cv",
+  number = 5,
+  summaryFunction = multiClassSummary,
+  verboseIter = FALSE,
+  sampling="down")
+
+
+
+## condensed >50% correlation
+draft_frm<-formula(rush_Rnd ~ rating + mean_ppa + success_rate + ypc + rush_yds + successes + success_yds + TDs + college_years)
+
+
+pts_xgb_m <- train(
+  form = draft_frm,
+  data = dfc.train,
+  method = "xgbTree",
+  preProcess = c("scale","center"),
+  trControl = fitControl
+)
+
+#summary(pts_xgb)
+
+pts_xgb_m %>% plot()
+
+```
+
+In observing the important factors of the model, we observe that HS Rating has high importance in the average round a runningback is drafted. What's interest around the importance of this model is that college years has low importance overall in what round a RB is drafted in. One area of concern is that the accuracy on the test set is 49% and 57.6% accuracy on the train, which may indicate some overfitting of the XGBTree model. 
+```{r a19,echo=FALSE,message=FALSE,warning=FALSE}
+
+varImp(pts_xgb_m,scale=FALSE) %>% plot()
+
+
+dfc.test$pred<-predict(pts_xgb_m,newdata = dfc.test)
+
+dfc.test$pred_accuracy<-ifelse(dfc.test$pred == dfc.test$rush_Rnd,TRUE,FALSE)
+
+table(dfc.test$pred_accuracy) / nrow(dfc.test)
+
+dfc.train$pred<-predict(pts_xgb_m,newdata = dfc.train)
+
+dfc.train$pred_accuracy<-ifelse(dfc.train$pred == dfc.train$rush_Rnd,TRUE,FALSE)
+
+table(dfc.train$pred_accuracy) / nrow(dfc.train)
+
+#train 62%
+#test 59%
+
+```
+
+Given our high range of values between 49% accuracy and 57.6% accuracy, we seek to fit another type of predictive algorithm to see if we can find any improvement. With that, we have chosen to fit a random forest model to see if we will get different results and a less overfit model. Our accuracy is 75.8% on the training set and ~67% accuracy on the test set. We still have a nature of overfitting given the different but the improvement along allows us a barebone model to work to use for analytics/predictions. 
+```{r a20,echo=FALSE,message=FALSE,warning=FALSE}
+
+
+pts_ranger <- train(
+  form = draft_frm,
+  data = dfc.train,
+  method = "ranger",
+  preProcess = c("scale","center"),
+  trControl = fitControl
+)
+
+pts_ranger$results$Accuracy %>% plot()
+
+# average accuracy of 68% 
+
+dfc.test$predrf<-predict(pts_ranger,newdata = dfc.test)
+
+dfc.test$pred_accuracy<-ifelse(dfc.test$predrf == dfc.test$rush_Rnd,TRUE,FALSE)
+
+table(dfc.test$pred_accuracy) / nrow(dfc.test)
+
+#test: 65%
+
+dfc.train$predrf<-predict(pts_ranger,newdata = dfc.train)
+
+dfc.train$pred_accuracy<-ifelse(dfc.train$predrf == dfc.train$rush_Rnd,TRUE,FALSE)
+
+table(dfc.train$pred_accuracy) / nrow(dfc.train)
+
+#69% 
+#let's go w/ random forest for prediction 
+
+```
+
+
+With the Random Forest Model, we seek to observe how accurate the predictions are through historical values. The first is to look at those predict in the correct timeframe. The first table shows accurate 1st round predictions and the 2nd table shows accurate 2nd day drafted runningbacks. 
+```{r a21,echo=FALSE,message=FALSE,warning=FALSE}
+
+ds$pred<-predict(pts_ranger,newdata = ds)
+#ds$pred_prob<-predict(pts_ranger,newdata = #ds,type="prob")
+
+
+
+#ds$rush_Rnd<-ds$rush_Rnd - 1
+
+ds %>%
+  dplyr::group_by(rusher_player_name) %>%
+  dplyr::filter(pred == "1" & rush_Rnd1 == "1" & rusher_player_name != "Doug Martin") %>%
+  dplyr::arrange(desc(rating)) %>%
+  dplyr::select(rusher_player_name,rating,pred,position,pos_team,rush_Rnd1,mean_ppa,success_rate,ypc,rush_yds,TDs,college_years) %>%
+  kable(caption = "First Round Probability & Drafted in 1st Round") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2000-2020")
+
+```
+
+```{r a22,echo=FALSE,message=FALSE,warning=FALSE}
+
+ds$pred<-predict(pts_ranger,newdata = ds)
+#ds$pred_prob<-predict(pts_ranger,newdata = #ds,type="prob")
+
+
+
+#ds$rush_Rnd<-ds$rush_Rnd - 1
+
+ds %>%
+  dplyr::group_by(rusher_player_name) %>%
+  dplyr::filter(pred %in% c("2","3") & rush_Rnd1 %in% c("2","3") & rusher_player_name != "Doug Martin") %>%
+  dplyr::arrange(pred,desc(rating)) %>%
+  dplyr::select(rusher_player_name,rating,pred,position,pos_team,rush_Rnd1,mean_ppa,success_rate,ypc,rush_yds,TDs,college_years) %>%
+  kable(caption = "Second Day Probability & Drafted 2nd Day") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2005-2020")
+
+```
+
+This table shows where the RBs where predicted a lot higher than they were drafted. In some cases, the prediction was dead-on in evaluating late round talent (Devonta Freeman, Jay Ajayi, Le'Veon Bell), however in many other cases where the RB was drafted anecdotally makes sense with their performance in the NFL. 
+```{r a23,echo=FALSE,message=FALSE,warning=FALSE}
+
+
+
+ds$pred_num<-ifelse(ds$pred == "0",8,
+             ifelse(ds$pred == "1",1,
+             ifelse(ds$pred == "2",2,
+             ifelse(ds$pred == "3",3,
+             ifelse(ds$pred == "4",4,
+             ifelse(ds$pred == "5",5,
+             ifelse(ds$pred == "6",6,7)))))))
+
+ds$rush_rnd_num<-ifelse(ds$rush_Rnd == "0",8,
+             ifelse(ds$rush_Rnd == "1",1,
+             ifelse(ds$rush_Rnd == "2",2,
+             ifelse(ds$rush_Rnd == "3",3,
+             ifelse(ds$rush_Rnd == "4",4,
+             ifelse(ds$rush_Rnd == "5",5,
+             ifelse(ds$rush_Rnd == "6",6,7)))))))
+
+ds$rnd_delta<-ds$rush_rnd_num - ds$pred_num
+
+
+ds %>%
+  dplyr::group_by(rusher_player_name) %>%
+  dplyr::filter(rush_rnd_num > pred_num & 
+                  rush_Rnd != "0" &
+                  pred_num <= 4) %>%
+  dplyr::arrange(pred,rush_Rnd) %>%
+  dplyr::select(rusher_player_name,rating,pred,position,pos_team,rush_Rnd,mean_ppa,success_rate,ypc,rush_yds,TDs,college_years) %>%
+  kable(caption = "RBs Who Slid in the Draft (according to the Prediction)") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2000-2020","Actual Round greater than predicted round for first 4 round talent")
+
+
+```
+
+This table shows RBs that were picked ahead of the round projected. Again, in some cases the prediction was accurate in the assessment (Felix Jones, Rashard Mendenhall, Toby Gerhart, Shane Vereen) but in a lot of other cases, the model incorrectly predicted the round to where the runningback was drafted, which make show where some teams reached to get a player. This is likely due to other NFL draft statistics that was not included in the model. 
+
+```{r a24,echo=FALSE,message=FALSE,warning=FALSE}
+
+ds %>%
+  dplyr::group_by(rusher_player_name) %>%
+  dplyr::filter(rush_rnd_num < pred_num & 
+                  rush_Rnd != "0") %>%
+  dplyr::arrange(rush_rnd_num,pred) %>%
+  dplyr::select(rusher_player_name,rating,pred,position,pos_team,rush_Rnd,mean_ppa,success_rate,ypc,rush_yds,TDs,college_years) %>%
+  kable(caption = "Early Picks of Draft") %>%
+  kable_styling(font_size = 10,bootstrap_options = c("condensed")) %>%
+  footnote(general = "Filtered for data from 2000-2020","Actual Round greater than predicted round for first 4 round talent")
+
+
+```
+
+
+
+#### Applications for Operations & Learnings
+We have learned that HS Rating is a big contributing factor to the probability of a RB getting drafted. Our initial model was being able to predict likelihood of being drafted or not helps current RBs on the fence give themselves a probability of coming back for another year or not. Our secondary models help to predict in the draft a runningback will be selected. We learned ADP is difficult to predict with Recruiting and on-field performance, which may suggest that other on-field performance and/or NFL Draft prep data may be needed. Also, we didn't take into consideration athletic size and fit for the role, which we know is important in the evaluation process. Other data that may enhance the accuracy of the models would be injury history and potentially player "clout". Understand these items more will help to evolve these initial models. 
