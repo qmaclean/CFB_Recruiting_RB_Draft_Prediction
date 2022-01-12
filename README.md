@@ -1,5 +1,7 @@
 # Running Back Recruiting Analysis
 
+HTML Analysis: https://htmlpreview.github.io/?https://github.com/qmaclean/CFB_Recruiting_RB_Draft_Prediction/blob/main/CFB_Recruiting_Analytics.html
+
 # Introduction
 The purpose of this analyis is to look at HS recruiting analytics & individual college performance to understand how this information translates to a player getting drafted in the NFL. We will evaluate some marquee programs in their recruiting success and build an initial model to predict Running back’s NFL draft stock. Additionally, we want to understand if HS Ratings are indicative of someone being drafted or not.
 
